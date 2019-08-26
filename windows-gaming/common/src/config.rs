@@ -96,7 +96,7 @@ pub enum Action {
 #[derive(Deserialize, Serialize, Debug, Clone, Default)]
 pub struct Config {
     pub machine: MachineConfig,
-    pub sound: SoundConfig,
+    pub sound: Option<SoundConfig>,
     pub samba: Option<SambaConfig>,
     pub setup: Option<SetupConfig>,
     pub additional_qemu_cmdline: Option<String>,
@@ -128,7 +128,6 @@ impl Default for SoundConfig {
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct SoundSettings {
     pub voices: usize,
-    pub use_polling: bool,
     pub fixed: Option<SoundFixedSettings>,
 }
 
@@ -136,7 +135,6 @@ impl Default for SoundSettings {
     fn default() -> SoundSettings {
         SoundSettings {
             voices: 1,
-            use_polling: true,
             fixed: None,
         }
     }
@@ -180,6 +178,7 @@ pub struct AlsaSettings {
     pub unit: AlsaUnit,
     pub buffer_size: usize,
     pub period_size: usize,
+    pub use_polling: bool,
 }
 
 impl Default for AlsaSettings {
@@ -190,6 +189,7 @@ impl Default for AlsaSettings {
             unit: AlsaUnit::Frames,
             buffer_size: 0,
             period_size: 0,
+            use_polling: true,
         }
     }
 }
