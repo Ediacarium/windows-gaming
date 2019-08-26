@@ -40,12 +40,6 @@ pub fn run(cfg: &Config, tmp: &Path, data: &Path, clientpipe_path: &Path, monito
     let mut usernet = format!("user,id=unet,restrict=on,guestfwd=tcp:10.0.2.1:31337-unix:{}",
                               clientpipe_path.display());
 
-    if let Some(ref samba) = cfg.samba {
-        trace!("setting up samba");
-        samba::setup(&tmp, samba, &mut usernet);
-        debug!("Samba started");
-    }
-
     let ga_iso = data.join("windows-gaming-ga.iso");
     assert!(ga_iso.exists());
 
@@ -54,7 +48,7 @@ pub fn run(cfg: &Config, tmp: &Path, data: &Path, clientpipe_path: &Path, monito
     let mut qemu = Command::new(QEMU);
     qemu.args(&["-enable-kvm",
                 "-machine",
-                "q35",
+                "pc-q35-3.1,kernel-irqchip=on",
                 "-cpu",
                 "host,kvm=off,hv_time,hv_relaxed,hv_vapic,hv_spinlocks=0x1fff,\
                  hv_vendor_id=NvidiaFuckU",
@@ -75,6 +69,13 @@ pub fn run(cfg: &Config, tmp: &Path, data: &Path, clientpipe_path: &Path, monito
                 "-drive", &format!("if=none,id=iso,media=cdrom,file={}", ga_iso.display()),
                 "-device", "scsi-cd,id=cdrom,drive=iso",
     ]);
+    
+    if let Some(ref samba) = cfg.samba {
+        trace!("setting up samba");
+        //samba::setup(&tmp, samba, &mut usernet);
+        qemu.args(&["-net", "nic", "-net", &format!("user,smb={}", samba.path)]);
+        debug!("Samba started");
+    }
 
     if enable_gui {
         qemu.args(&["-display", "gtk", "-vga", "qxl"]);
@@ -207,60 +208,64 @@ pub fn run(cfg: &Config, tmp: &Path, data: &Path, clientpipe_path: &Path, monito
         debug!("Passed through {}", drive.path);
     }
 
-    {
+    if let Some(sound) = &cfg.sound {
         trace!("Applying sound config");
-        let sound = &cfg.sound;
 
-        qemu.env("QEMU_AUDIO_TIMER_PERIOD", sound.timer_period.to_string());
+        let mut audio_args = Vec::new();
 
-        qemu.env("QEMU_AUDIO_DAC_VOICES", sound.output.voices.to_string());
-        qemu.env("QEMU_AUDIO_DAC_TRY_POLL", if sound.output.use_polling { "1" } else { "0" });
+        audio_args.push(format!("timer-period={}",sound.timer_period.to_string()));
+
+        audio_args.push(format!("out.voices={}", sound.output.voices.to_string()));
 
         match &sound.output.fixed {
             &None => {
-                qemu.env("QEMU_AUDIO_DAC_FIXED_SETTINGS", "0");
+                audio_args.push(format!("out.fixed-settings={}", "off"));
             }
             &Some(ref x) => {
-                qemu.env("QEMU_AUDIO_DAC_FIXED_SETTINGS", "1");
-                qemu.env("QEMU_AUDIO_DAC_FIXED_FREQ", x.frequency.to_string());
-                qemu.env("QEMU_AUDIO_DAC_FIXED_FMT", &x.format);
-                qemu.env("QEMU_AUDIO_DAC_FIXED_CHANNELS", x.channels.to_string());
+                audio_args.push(format!("out.fixed-settings={}", "on"));
+                audio_args.push(format!("out.frequency={}", x.frequency.to_string()));
+                audio_args.push(format!("out.format={}", &x.format.to_ascii_lowercase()));
+                audio_args.push(format!("out.channels={}", x.channels.to_string()));
             }
         }
 
-        qemu.env("QEMU_AUDIO_ADC_VOICES", sound.input.voices.to_string());
-        qemu.env("QEMU_AUDIO_ADC_TRY_POLL", if sound.output.use_polling { "1" } else { "0" });
+        audio_args.push(format!("in.voices={}", sound.input.voices.to_string()));
 
         match &sound.input.fixed {
             &None => {
-                qemu.env("QEMU_AUDIO_ADC_FIXED_SETTINGS", "0");
+                audio_args.push(format!("in.fixed-settings={}", "off"));
             }
             &Some(ref x) => {
-                qemu.env("QEMU_AUDIO_ADC_FIXED_SETTINGS", "1");
-                qemu.env("QEMU_AUDIO_ADC_FIXED_FREQ", x.frequency.to_string());
-                qemu.env("QEMU_AUDIO_ADC_FIXED_FMT", &x.format);
-                qemu.env("QEMU_AUDIO_ADC_FIXED_CHANNELS", x.channels.to_string());
+                audio_args.push(format!("in.fixed-settings={}", "on"));
+                audio_args.push(format!("in.frequency={}", x.frequency.to_string()));
+                audio_args.push(format!("in.format={}", &x.format.to_ascii_lowercase()));
+                audio_args.push(format!("in.channels={}", x.channels.to_string()));
             }
         }
 
         match &sound.backend {
             &SoundBackend::None => {
-                qemu.env("QEMU_AUDIO_DRV", "none");
+                qemu.args(&["-audiodev", "none"]);
             }
             &SoundBackend::Alsa { ref sink, ref source } => {
-                qemu.env("QEMU_AUDIO_DRV", "alsa");
+                audio_args.push(format!("out.dev={}", &sink.name));
+                //TODO: figure out if this still exists
+                /*qemu.env("QEMU_ALSA_DAC_SIZE_IN_USEC",
+                         if sink.unit == AlsaUnit::MicroSeconds { "1" } else { "0" });*/
 
-                qemu.env("QEMU_ALSA_DAC_DEV", &sink.name);
-                qemu.env("QEMU_ALSA_DAC_SIZE_IN_USEC",
-                         if sink.unit == AlsaUnit::MicroSeconds { "1" } else { "0" });
-                qemu.env("QEMU_ALSA_DAC_BUFFER_SIZE", sink.buffer_size.to_string());
-                qemu.env("QEMU_ALSA_DAC_PERIOD_SIZE", sink.period_size.to_string());
+                audio_args.push(format!("out.buffer={}", sink.buffer_size.to_string()));
+                audio_args.push(format!("out.period-len={}", sink.period_size.to_string()));
+                audio_args.push(format!("out.try-poll={}",if sink.use_polling { "on" } else { "off" }));
 
-                qemu.env("QEMU_ALSA_ADC_DEV", &source.name);
-                qemu.env("QEMU_ALSA_ADC_SIZE_IN_USEC",
-                         if source.unit == AlsaUnit::MicroSeconds { "1" } else { "0" });
-                qemu.env("QEMU_ALSA_ADC_BUFFER_SIZE", source.buffer_size.to_string());
-                qemu.env("QEMU_ALSA_ADC_PERIOD_SIZE", source.period_size.to_string());
+                audio_args.push(format!("in.dev={}", &source.name));
+                //TODO: figure out if this still exists
+                /*qemu.env("QEMU_ALSA_ADC_SIZE_IN_USEC",
+                         if source.unit == AlsaUnit::MicroSeconds { "1" } else { "0" });*/
+                audio_args.push(format!("in.buffer={}", source.buffer_size.to_string()));
+                audio_args.push(format!("in.period-len={}", source.period_size.to_string()));
+                audio_args.push(format!("in.try-poll={}", if source.use_polling { "on" } else { "off" }));
+
+                qemu.args(&["-audiodev", &format!("alsa,id=alsaaudio,{}",audio_args.join(","))]);
             }
             &SoundBackend::PulseAudio {
                 buffer_samples,
@@ -268,12 +273,13 @@ pub fn run(cfg: &Config, tmp: &Path, data: &Path, clientpipe_path: &Path, monito
                 ref sink_name,
                 ref source_name,
             } => {
-                qemu.env("QEMU_AUDIO_DRV", "pa");
+                //TODO: figure out if this still exists
+                //qemu.env("QEMU_PA_SAMPLES", buffer_samples.to_string());
+                option2args(&mut audio_args, "server", server);
+                option2args(&mut audio_args, "out.name", sink_name);
+                option2args(&mut audio_args, "in.name", source_name);
 
-                qemu.env("QEMU_PA_SAMPLES", buffer_samples.to_string());
-                option2env(&mut qemu, "QEMU_PA_SERVER", server);
-                option2env(&mut qemu, "QEMU_PA_SINK", sink_name);
-                option2env(&mut qemu, "QEMU_PA_SOURCE", source_name);
+                qemu.args(&["-audiodev", &format!("pa,id=pulseaudio,{}",audio_args.join(","))]);
             }
         }
     }
@@ -299,9 +305,9 @@ pub fn run(cfg: &Config, tmp: &Path, data: &Path, clientpipe_path: &Path, monito
     return qemu;
 }
 
-fn option2env(cmd: &mut Command, name: &str, val: &Option<String>) {
+fn option2args(args: &mut Vec<String>, name: &str, val: &Option<String>) {
     match val {
-        &None => cmd.env_remove(name),
-        &Some(ref x) => cmd.env(name, &x),
+        &None => (),
+        &Some(ref x) => args.push(format!("{}={}", name, x)),
     };
 }
