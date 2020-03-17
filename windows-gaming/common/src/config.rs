@@ -266,7 +266,6 @@ pub struct NetworkConfig {
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct SambaConfig {
-    pub user: String,
     pub path: String,
 }
 

@@ -4,6 +4,7 @@ use std::iter::Iterator;
 use std::fs;
 use std::io;
 use std::os::unix::process::CommandExt as UnixCommandExt;
+use std::fmt::Write;
 
 use itertools::Itertools;
 use tokio_core::reactor::Handle;
@@ -72,8 +73,8 @@ pub fn run(cfg: &Config, tmp: &Path, data: &Path, clientpipe_path: &Path, monito
     
     if let Some(ref samba) = cfg.samba {
         trace!("setting up samba");
-        //samba::setup(&tmp, samba, &mut usernet);
-        qemu.args(&["-net", "nic", "-net", &format!("user,smb={}", samba.path)]);
+        samba::setup(&tmp, samba, &mut usernet);
+        //qemu.args(&["-net", "nic", "-net", &format!("user,smb={}", samba.path)]);
         debug!("Samba started");
     }
 
